@@ -2074,6 +2074,10 @@ def get_config_schema():
                 'enable_gvnic': {
                     'type': 'boolean'
                 },
+                'max_run_duration_seconds': {
+                    'type': 'integer',
+                    'minimum': 120,
+                },
                 'enable_gpu_direct': {
                     'type': 'boolean'
                 },
