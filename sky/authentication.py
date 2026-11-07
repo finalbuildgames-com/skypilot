@@ -386,13 +386,18 @@ def setup_vast_authentication(config: Dict[str, Any]) -> Dict[str, Any]:
             if not any(x['public_key'] == public_key for x in current_key_list):
                 vast.vast().create_ssh_key(ssh_key=public_key)
         except requests.HTTPError as e:
-            # Team-scoped Vast keys can't register account SSH keys;
-            # onstart_cmd injection in vast/utils.py handles SSH access.
+            # Team-scoped Vast keys can't register account SSH keys, and
+            # neither can a key without the user_write permission (HTTP 401
+            # or 403). onstart_cmd injection in vast/utils.py handles SSH
+            # access, so registration is optional.
             body = e.response.text if e.response is not None else ''
-            if 'team_ssh_keys_not_supported' not in body:
+            status = e.response.status_code if e.response is not None else None
+            if (status not in (401, 403) and
+                    'team_ssh_keys_not_supported' not in body):
                 raise
-            logger.debug('Skipping Vast account SSH key registration: '
-                         'team API key context.')
+            logger.debug('Skipping Vast account SSH key registration '
+                         f'(HTTP {status}): the key is injected through '
+                         'the onstart command.')
 
     config['auth']['ssh_public_key'] = public_key_path
     return configure_ssh_info(config)
