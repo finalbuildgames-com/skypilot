@@ -715,6 +715,16 @@ class GCP(clouds.Cloud):
                 keys=('enable_gvnic',),
                 default_value=False,
                 override_configs=resources.cluster_config_overrides)
+        # Hard deadline: Compute Engine itself deletes the VM this many seconds
+        # after it started, whatever happens to the client and to the
+        # cluster's own autostop.
+        resources_vars[
+            'max_run_duration_seconds'] = skypilot_config.get_effective_region_config(
+                cloud='gcp',
+                region=region_name,
+                keys=('max_run_duration_seconds',),
+                default_value=None,
+                override_configs=resources.cluster_config_overrides)
         placement_policy = skypilot_config.get_effective_region_config(
             cloud='gcp',
             region=region_name,
