@@ -237,8 +237,15 @@ def get_cluster_info(
                     instance_info.get('public_ipaddr', ''))
         ports_dict = instance_info.get('ports') or {}
         tcp22 = ports_dict.get('22/tcp') or []
-        ssh_port = (int(tcp22[0]['HostPort'])
-                    if tcp22 else instance_info.get('ssh_port'))
+        ssh_port = instance_info.get('ssh_port')
+        public_ip = (instance_info.get('public_ipaddr') or '').strip()
+        if tcp22 and public_ip:
+            # A direct-run-type instance (`direct: true` in
+            # create_instance_kwargs) maps its sshd to a port of the machine's
+            # own address; that port does not exist on the gateway.
+            ssh_host, ssh_port = public_ip, int(tcp22[0]['HostPort'])
+        elif tcp22 and ssh_port is None:
+            ssh_port = int(tcp22[0]['HostPort'])
         instances[instance_id] = [
             common.InstanceInfo(
                 instance_id=instance_id,
