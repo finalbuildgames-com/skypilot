@@ -8,6 +8,7 @@ from sky import catalog
 from sky import clouds
 from sky import skypilot_config
 from sky.adaptors import common
+from sky.adaptors import vast as vast_adaptor
 from sky.utils import registry
 from sky.utils import resources_utils
 
@@ -328,6 +329,11 @@ class Vast(clouds.Cloud):
         return True, None
 
     def get_credential_file_mounts(self) -> Dict[str, str]:
+        # With two-factor authentication on the account, only the session key
+        # works (see sky/adaptors/vast.py), so that is the key the cluster
+        # gets under the usual name (its autostop and autodown call Vast).
+        if os.path.exists(os.path.expanduser(vast_adaptor.TFA_KEY_FILE)):
+            return {f'{_CREDENTIAL_PATH}': vast_adaptor.TFA_KEY_FILE}
         return {f'{_CREDENTIAL_PATH}': f'{_CREDENTIAL_PATH}'}
 
     @classmethod
