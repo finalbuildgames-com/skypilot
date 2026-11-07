@@ -14,7 +14,6 @@ from sky.adaptors import vast
 
 logger = sky_logging.init_logger(__name__)
 
-
 def list_instances() -> Dict[str, Dict[str, Any]]:
     """Lists instances associated with API key."""
     instances = vast.vast().show_instances()
@@ -74,6 +73,15 @@ def launch(name: str,
       - args: Custom docker command arguments as list of strings
       - user: Run as specific user
 
+    SkyPilot's own keys in create_instance_kwargs (not sent to Vast):
+      - offer_id: rent exactly this offer; no search is made. The caller found
+        the offer with its own filters (reliability, driver, countries,
+        machines to avoid).
+      - max_dph: the most the instance may cost per hour. A search result
+        above it is skipped; an instance that turns out dearer than 110% of it
+        is destroyed and the launch fails. No default: without it the
+        cheapest-first search result is rented at whatever it costs.
+
     Notes:
       *  `georegion`: This is a feature flag to provide an additional
          scope of geographical specificy while maintaining backward
@@ -111,6 +119,13 @@ def launch(name: str,
     # `ports` is currently unused. Keep it in the signature for caller
     # compatibility and future use (port-forwarding is handled separately).
     del ports
+    # Start with user-provided kwargs as the base
+    launch_params: Dict[str, Any] = dict(create_instance_kwargs or {})
+    # Remove None values to avoid overriding defaults
+    launch_params = {k: v for k, v in launch_params.items() if v is not None}
+    offer_id = launch_params.pop('offer_id', None)
+    max_dph = launch_params.pop('max_dph', None)
+    max_dph = float(max_dph) if max_dph is not None else None
     cpu_ram = float(instance_type.split('-')[-1]) / 1024
     gpu_name = instance_type.split('-')[1].replace('_', ' ')
     num_gpus = int(instance_type.split('-')[0].replace('x', ''))
@@ -129,19 +144,29 @@ def launch(name: str,
         query.append('hosting_type>=1')
     query_str = ' '.join(query)
 
-    instance_list = vast.vast().search_offers(query=query_str)
+    if offer_id is not None:
+        instance_touse = {'id': int(offer_id), 'min_bid': None}
+    else:
+        instance_list = vast.vast().search_offers(query=query_str)
 
-    if isinstance(instance_list, int) or len(instance_list) == 0:
-        raise RuntimeError('Failed to create instances, could not find an '
-                           'offer that satisfies the requirements '
-                           f'"{query_str}".')
-
-    instance_touse = instance_list[0]
-
-    # Start with user-provided kwargs as the base
-    launch_params: Dict[str, Any] = dict(create_instance_kwargs or {})
-    # Remove None values to avoid overriding defaults
-    launch_params = {k: v for k, v in launch_params.items() if v is not None}
+        if isinstance(instance_list, int) or len(instance_list) == 0:
+            raise RuntimeError('Failed to create instances, could not find an '
+                               'offer that satisfies the requirements '
+                               f'"{query_str}".')
+        if max_dph is not None:
+            within_cap = sorted(
+                (o for o in instance_list
+                 if float(o.get('dph_total') or 0) <= max_dph),
+                key=lambda o: float(o.get('dph_total') or 0))
+            if not within_cap:
+                cheapest = min(
+                    float(o.get('dph_total') or 0) for o in instance_list)
+                raise RuntimeError(
+                    f'Failed to create instances, no offer for "{query_str}" '
+                    f'costs {max_dph}$/h or less (cheapest {cheapest:.3f}$/h).'
+                    ' Raise max_dph in create_instance_kwargs to allow it.')
+            instance_list = within_cap
+        instance_touse = instance_list[0]
 
     # Required skypilot parameters
     launch_params['id'] = instance_touse['id']
@@ -240,6 +265,14 @@ def launch(name: str,
 
     new_instance = vast.vast().show_instance(
         id=new_instance_contract['new_contract'])
+
+    price = float(new_instance.get('dph_total') or 0)
+    if max_dph is not None and price > max_dph * 1.10:
+        # The offer changed price between the search and the rental.
+        vast.vast().destroy_instance(id=new_instance['id'])
+        raise RuntimeError(
+            f'Vast instance {new_instance["id"]} costs {price:.3f}$/h, over '
+            f'the cap of {max_dph}$/h; it was destroyed.')
 
     return new_instance['id']
 
